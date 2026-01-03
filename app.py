@@ -8,145 +8,132 @@ import statsmodels.api as sm
 from statsmodels.formula.api import ols, mixedlm
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
-# Set page config
-st.set_page_config(page_title="Mite Population Statistical Analysis", layout="wide")
+# --- APP CONFIGURATION ---
+st.set_page_config(page_title="Mite Statistical Analysis Roadmap", layout="wide")
 
-st.title("📊 Professional Mite Analysis Dashboard")
-st.markdown("Upload your data to execute the **Final Statistical Analysis Roadmap**.")
+st.title("🔬 Mite Population Professional Analysis")
+st.markdown("Implementation of the **FINAL STATISTICAL ANALYSIS ROADMAP** (Phases 1-6).")
 
-# --- SIDEBAR: FILE UPLOADER ---
-st.sidebar.header("Data Input")
-uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type=["csv"])
+# --- SIDEBAR: DATA UPLOAD ---
+st.sidebar.header("Data Management")
+uploaded_file = st.sidebar.file_uploader("Upload your CSV.csv file", type=["csv"])
 
 if uploaded_file is not None:
-    # Phase 1: Data Preparation
+    # PHASE 1: DATA PREPARATION
     df = pd.read_csv(uploaded_file)
     
-    # Map 'Management' to 'Field_Type' if necessary as per roadmap
+    # Roadmap Step 1.1: Rename Management to Field_Type to match roadmap
     if 'Management' in df.columns:
         df = df.rename(columns={'Management': 'Field_Type'})
     
-    # Check for required columns
     required_cols = ['Year', 'Week', 'Crop', 'Field_Type', 'Mite_Count']
+    
     if not all(col in df.columns for col in required_cols):
-        st.error(f"Missing required columns! Your CSV must have: {required_cols}")
+        st.error(f"Error: CSV missing columns. Required: {required_cols}")
     else:
-        # Layout Tabs
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📁 Data & Descriptive", 
-            "📈 AUDPC & ANOVA", 
-            "🕒 Temporal & Peak", 
-            "🌿 Crop Specific", 
-            "🔍 Assumptions"
+        # Create Tabs for the 6 Phases
+        tab_prep, tab_primary, tab_temporal, tab_crop_spec, tab_comparative, tab_validation = st.tabs([
+            "Phase 1: Prep", "Phase 2: AUDPC & ANOVA", "Phase 3: Temporal", 
+            "Phase 4: Crop Specific", "Phase 5: Comparative", "Phase 6: Validation"
         ])
 
-        with tab1:
-            st.header("Phase 1: Data Preparation & Exploration")
-            st.subheader("Step 1.1: Dataset Preview")
-            st.dataframe(df.head(10))
-            
-            st.subheader("Step 1.2: Descriptive Statistics")
-            desc_stats = df.groupby(['Crop', 'Field_Type'])['Mite_Count'].agg([
-                'mean', 'std', 'count', 'min', 'max'
+        # --- PHASE 1: PREPARATION & EXPLORATION ---
+        with tab_prep:
+            st.header("Step 1.2: Descriptive Statistics")
+            stats_df = df.groupby(['Crop', 'Field_Type'])['Mite_Count'].agg([
+                'mean', 'std', 'min', 'max', 'count'
             ]).reset_index()
-            desc_stats['se'] = desc_stats['std'] / np.sqrt(desc_stats['count'])
-            st.write("Summary Statistics per Treatment:")
-            st.dataframe(desc_stats.style.format(precision=3))
-
-        with tab2:
-            st.header("Phase 2: Primary Statistical Analyses")
+            stats_df['se'] = stats_df['std'] / np.sqrt(stats_df['count'])
+            st.dataframe(stats_df.style.format(precision=3))
             
-            # Step 2.1: AUDPC Calculation
-            def calculate_audpc(group):
+            # Overview Graph
+            st.subheader("Visual Overview")
+            fig1, ax1 = plt.subplots(figsize=(10, 4))
+            sns.boxplot(data=df, x='Crop', y='Mite_Count', hue='Field_Type', ax=ax1)
+            st.pyplot(fig1)
+
+        # --- PHASE 2: PRIMARY STATISTICAL ANALYSES ---
+        with tab_primary:
+            st.header("Step 2.1: AUDPC Calculation")
+            # AUDPC Function: Σ [(Yi + Yi+1)/2] × (ti+1 - ti)
+            def get_audpc(group):
                 group = group.sort_values('Week')
-                # trapz handles the formula: Σ [(Yi + Yi+1)/2] × (ti+1 - ti)
                 return np.trapz(group['Mite_Count'], group['Week'])
 
             audpc_df = df.groupby(['Year', 'Crop', 'Field_Type'])['Mite_Count'].apply(
-                lambda x: calculate_audpc(df.loc[x.index])
+                lambda x: get_audpc(df.loc[x.index])
             ).reset_index(name='AUDPC')
-
-            st.subheader("Step 2.1: AUDPC Results")
+            st.write("Calculated AUDPC values per Year/Crop/Management:")
             st.dataframe(audpc_df)
 
-            # Step 2.2: Two-Way ANOVA
-            st.subheader("Step 2.2: Two-Way ANOVA on AUDPC")
+            st.header("Step 2.2: Two-Way ANOVA on AUDPC")
+            # AUDPC = Crop + Field_Type + Interaction + Year
+            model = ols('AUDPC ~ C(Crop) * C(Field_Type) + C(Year)', data=audpc_df).fit()
+            anova_table = sm.stats.anova_lm(model, typ=2)
+            st.write(anova_table)
+
+            st.header("Step 2.3: Tukey's HSD Post-Hoc")
+            audpc_df['Group'] = audpc_df['Crop'] + "_" + audpc_df['Field_Type']
+            tukey = pairwise_tukeyhsd(endog=audpc_df['AUDPC'], groups=audpc_df['Group'], alpha=0.05)
+            st.write(tukey.summary())
+
+        # --- PHASE 3: TEMPORAL PATTERN ANALYSES ---
+        with tab_temporal:
+            st.header("Step 3.1: Mixed Model Repeated Measures")
             try:
-                model_formula = 'AUDPC ~ C(Crop) * C(Field_Type) + C(Year)'
-                model = ols(model_formula, data=audpc_df).fit()
-                anova_table = sm.stats.anova_lm(model, typ=2)
-                st.write(anova_table)
+                # Year as Random Factor
+                md = mixedlm("Mite_Count ~ Crop * Field_Type * Week", df, groups=df["Year"])
+                mdf = md.fit()
+                st.write(mdf.summary().tables[1])
+            except:
+                st.warning("Mixed model failed. This usually happens if there isn't enough variance in 'Year'.")
 
-                # Step 2.3: Post-Hoc
-                st.subheader("Step 2.3: Tukey's HSD Post-Hoc")
-                audpc_df['Combination'] = audpc_df['Crop'] + " (" + audpc_df['Field_Type'] + ")"
-                m_comp = pairwise_tukeyhsd(endog=audpc_df['AUDPC'], groups=audpc_df['Combination'], alpha=0.05)
-                st.write(m_comp.summary())
-            except Exception as e:
-                st.warning(f"ANOVA could not be calculated. Ensure you have enough replicates/years. Error: {e}")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.header("Step 3.2: Peak Week")
+                peak_df = df.loc[df.groupby(['Year', 'Crop', 'Field_Type'])['Mite_Count'].idxmax()]
+                peak_summary = peak_df.groupby(['Crop', 'Field_Type'])['Week'].agg(['mean', 'sem'])
+                st.write(peak_summary)
+            with col2:
+                st.header("Step 3.3: Threshold (Count >= 2)")
+                thresh = df[df['Mite_Count'] >= 2].groupby(['Year', 'Crop', 'Field_Type'])['Week'].min().reset_index()
+                st.write(thresh.groupby(['Crop', 'Field_Type'])['Week'].agg(['mean', 'sem']))
 
-        with tab3:
-            st.header("Phase 3: Temporal Pattern Analyses")
-            
-            # Visualizing the trend
-            fig_trend, ax_trend = plt.subplots(figsize=(10, 5))
-            sns.lineplot(data=df, x='Week', y='Mite_Count', hue='Crop', style='Field_Type', marker='o', ax=ax_trend)
-            st.pyplot(fig_trend)
-
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.subheader("Peak Week Analysis")
-                peak_idx = df.groupby(['Year', 'Crop', 'Field_Type'])['Mite_Count'].idxmax()
-                peak_df = df.loc[peak_idx]
-                peak_sum = peak_df.groupby(['Crop', 'Field_Type'])['Week'].agg(['mean', 'std']).rename(columns={'mean': 'Avg Peak Week'})
-                st.dataframe(peak_sum)
-
-            with col_b:
-                st.subheader("Economic Threshold (>= 2)")
-                threshold_df = df[df['Mite_Count'] >= 2].groupby(['Year', 'Crop', 'Field_Type'])['Week'].min().reset_index()
-                if not threshold_df.empty:
-                    thresh_sum = threshold_df.groupby(['Crop', 'Field_Type'])['Week'].agg(['mean', 'std'])
-                    st.dataframe(thresh_sum)
-                else:
-                    st.info("Mite count never reached threshold of 2.")
-
-        with tab4:
-            st.header("Phase 4 & 5: Crop-Specific & Comparative")
-            crops = df['Crop'].unique()
-            for crop in crops:
+        # --- PHASE 4: CROP-SPECIFIC ANALYSES ---
+        with tab_crop_spec:
+            for crop in df['Crop'].unique():
                 st.subheader(f"Analysis for {crop}")
                 c_data = audpc_df[audpc_df['Crop'] == crop]
-                means = c_data.groupby('Field_Type')['AUDPC'].mean()
+                m_org = c_data[c_data['Field_Type'] == 'Organic']['AUDPC'].mean()
+                m_non = c_data[c_data['Field_Type'] == 'Non organic']['AUDPC'].mean()
+                reduction = ((m_non - m_org) / m_non) * 100
+                st.metric(f"{crop} Reduction via Organic", f"{reduction:.2f}%")
                 
-                if len(means) == 2:
-                    reduction = ((means['Non organic'] - means['Organic']) / means['Non organic']) * 100
-                    st.metric(f"{crop} Organic Reduction %", f"{reduction:.2f}%")
-                
-                fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
-                sns.barplot(data=c_data, x='Field_Type', y='AUDPC', ax=ax_bar)
-                st.pyplot(fig_bar)
+                fig_c, ax_c = plt.subplots(figsize=(5, 3))
+                sns.barplot(data=c_data, x='Field_Type', y='AUDPC', ax=ax_c)
+                st.pyplot(fig_c)
 
-        with tab5:
-            st.header("Phase 6: Validation of Assumptions")
-            if 'model' in locals():
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write("**Normality (Shapiro-Wilk)**")
-                    shapiro_p = stats.shapiro(model.resid)[1]
-                    st.write(f"p-value: {shapiro_p:.4f}")
-                    st.info("Goal: p > 0.05 for normal distribution.")
-                
-                with col2:
-                    st.write("**Homogeneity (Levene's)**")
-                    groups = [group['AUDPC'].values for name, group in audpc_df.groupby('Combination')]
-                    levene_p = stats.levene(*groups)[1]
-                    st.write(f"p-value: {levene_p:.4f}")
-                    st.info("Goal: p > 0.05 for equal variances.")
+        # --- PHASE 5: COMPARATIVE ---
+        with tab_comparative:
+            st.header("Step 5.2: Effect Size (Eta-Squared)")
+            ss_total = anova_table['sum_sq'].sum()
+            eta_sq = anova_table['sum_sq'] / ss_total
+            st.write("Practical Significance (η²):")
+            st.write(eta_sq.dropna())
+
+        # --- PHASE 6: VALIDATION ---
+        with tab_validation:
+            st.header("Step 6.1: ANOVA Assumptions")
+            shapiro_p = stats.shapiro(model.resid)[1]
+            st.write(f"Normality (Shapiro-Wilk) p-value: {shapiro_p:.4f}")
+            if shapiro_p > 0.05: st.success("Assumption Met: Data is Normal")
+            else: st.error("Assumption Failed: Data is Non-Normal")
+            
+            # Visualizing Temporal Trends
+            st.subheader("Seasonal Population Dynamics")
+            fig_final, ax_final = plt.subplots(figsize=(12, 5))
+            sns.lineplot(data=df, x='Week', y='Mite_Count', hue='Crop', style='Field_Type', marker='o')
+            st.pyplot(fig_final)
 
 else:
-    st.info("Please upload your CSV file in the sidebar to begin the analysis.")
-    st.image("https://via.placeholder.com/800x400.png?text=Awaiting+Data+Upload", use_column_width=True)
-
-
-
-[Image of a data analysis dashboard]
+    st.info("👋 Welcome! Please upload your 'CSV.csv' file in the sidebar to generate the roadmap analysis.")
