@@ -5,6 +5,8 @@ import scipy.stats as stats
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Set Page Config
 st.set_page_config(page_title="Mite Analysis Tool", layout="wide")
@@ -103,7 +105,7 @@ if uploaded_file is not None:
 
     # --- STEP 2.1: AUDPC CALCULATION ---
     st.subheader("📋 Step 2.1: AUDPC Calculation")
-    st.info("AUDPC summarizes the entire season's mite pressure into a single value for each plot/replicate.")
+    st.info("AUDPC summarizes the entire season's mite pressure into a single value.")
 
     def calculate_audpc(group):
         group = group.sort_values('Week')
@@ -127,7 +129,6 @@ if uploaded_file is not None:
     # --- STEP 2.2: TWO-WAY ANOVA ON AUDPC ---
     st.subheader("📋 Step 2.2: Two-Way ANOVA (Main Test)")
     
-    # Building the Model: AUDPC ~ Crop + Field_Type + Crop:Field_Type
     model_formula = 'AUDPC_Value ~ C(Crop) + C(Field_Type) + C(Crop):C(Field_Type)'
     
     try:
@@ -137,7 +138,6 @@ if uploaded_file is not None:
         st.write("**ANOVA Table Results:**")
         st.dataframe(anova_table.style.format(precision=4))
 
-        # Interpretation logic
         sig_threshold = 0.05
         st.markdown("#### 🔍 Key Findings:")
         for factor in anova_table.index[:-1]:
@@ -146,41 +146,73 @@ if uploaded_file is not None:
                 st.success(f"✅ **{factor}** is statistically significant (p = {p_val:.4f})")
             else:
                 st.warning(f"⚪ **{factor}** is NOT statistically significant (p = {p_val:.4f})")
-
     except Exception as e:
         st.error(f"Error running ANOVA: {e}")
 
     # --- STEP 2.3: POST-HOC TESTS (TUKEY HSD) ---
     st.subheader("📋 Step 2.3: Tukey's Post-Hoc Test")
-    
-    # Create a 'Treatment' column for pairwise comparison
     audpc_results['Treatment'] = audpc_results['Crop'] + " - " + audpc_results['Field_Type']
     
     if st.button("Run Tukey's HSD Test"):
         tukey = pairwise_tukeyhsd(endog=audpc_results['AUDPC_Value'],
-                                  groups=audpc_results['Treatment'],
-                                  alpha=0.05)
-        
+                                 groups=audpc_results['Treatment'],
+                                 alpha=0.05)
         st.write("**Pairwise Comparisons:**")
         tukey_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
         st.dataframe(tukey_df)
-        
-        sig_diffs = tukey_df[tukey_df['reject'] == True]
-        if not sig_diffs.empty:
-            st.success(f"Significant differences found in {len(sig_diffs)} treatment pairs.")
-        else:
-            st.info("No significant differences found between treatment groups.")
 
-    # --- DOWNLOAD RESULTS ---
-    st.subheader("💾 Export Phase 2 Results")
-    csv_audpc = audpc_results.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="Download AUDPC Data CSV",
-        data=csv_audpc,
+        data=audpc_results.to_csv(index=False).encode('utf-8'),
         file_name='phase2_audpc_results.csv',
         mime='text/csv',
     )
 
+    # --- PHASE 3: TEMPORAL PATTERN ANALYSES ---
+    st.divider()
+    st.title("🎯 Statistical Analysis: Phase 3")
+    st.markdown("### Temporal Pattern Analyses")
+
+    # Step 3.1: Mixed Model Repeated Measures
+    st.subheader("📋 Step 3.1: Mixed Model (Repeated Measures)")
+    try:
+        mixed_formula = 'Mite_Count ~ C(Crop) * C(Field_Type) * Week'
+        random_grp = 'Year'
+        if 'Replicate' in df_final.columns:
+            df_final['Group_ID'] = df_final['Year'].astype(str) + "_" + df_final['Replicate'].astype(str)
+            random_grp = 'Group_ID'
+
+        model_mixed = sm.MixedLM.from_formula(mixed_formula, groups=df_final[random_grp], data=df_final)
+        mixed_results = model_mixed.fit()
+        st.text(mixed_results.summary())
+    except Exception as e:
+        st.error(f"Mixed Model Error: {e}")
+
+    # Step 3.2: Peak Week Identification
+    st.subheader("📋 Step 3.2: Peak Week Identification")
+    peak_analysis = df_final.groupby(['Crop', 'Field_Type', 'Week'])['Mite_Count'].mean().reset_index()
+    idx = peak_analysis.groupby(['Crop', 'Field_Type'])['Mite_Count'].idxmax()
+    peak_results = peak_analysis.loc[idx].rename(columns={'Week': 'Peak_Week', 'Mite_Count': 'Peak_Density'})
+    st.dataframe(peak_results.style.format({"Peak_Density": "{:.2f}"}))
+
+    # Step 3.3: Economic Threshold Analysis
+    st.subheader("📋 Step 3.3: Economic Threshold Analysis")
+    threshold = st.number_input("Set Economic Threshold (Mites/Plant)", value=2.0)
+    
+    threshold_data = df_final.groupby(['Year', 'Crop', 'Field_Type']).apply(
+        lambda x: x[x['Mite_Count'] >= threshold]['Week'].min() if not x[x['Mite_Count'] >= threshold].empty else np.nan
+    ).reset_index()
+    threshold_data.columns = ['Year', 'Crop', 'Field_Type', 'Threshold_Week']
+    
+    st.write("Average Week Reaching Threshold:")
+    st.dataframe(threshold_data.groupby(['Crop', 'Field_Type'])['Threshold_Week'].mean())
+
+    # Visualization
+    st.subheader("📈 Temporal Dynamics Plot")
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.lineplot(data=df_final, x='Week', y='Mite_Count', hue='Crop', style='Field_Type', marker='o', ax=ax)
+    plt.axhline(y=threshold, color='r', linestyle='--', label='Threshold')
+    st.pyplot(fig)
+
 else:
-    st.info("Please upload a CSV file to begin Phase 1.")
-    st.warning("Phase 2 will become available once data is uploaded and processed.")
+    st.info("Please upload a CSV file to begin.")
