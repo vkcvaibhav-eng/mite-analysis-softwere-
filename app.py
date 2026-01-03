@@ -155,7 +155,7 @@ if uploaded_file is not None:
     
     if st.button("Run Tukey's HSD Test"):
         tukey = pairwise_tukeyhsd(endog=audpc_results['AUDPC_Value'],
-                                 groups=audpc_results['Treatment'],
+                                groups=audpc_results['Treatment'],
                                  alpha=0.05)
         st.write("**Pairwise Comparisons:**")
         tukey_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
@@ -213,6 +213,51 @@ if uploaded_file is not None:
     sns.lineplot(data=df_final, x='Week', y='Mite_Count', hue='Crop', style='Field_Type', marker='o', ax=ax)
     plt.axhline(y=threshold, color='r', linestyle='--', label='Threshold')
     st.pyplot(fig)
+
+    # --- PHASE 4: CROP-SPECIFIC ANALYSES ---
+    st.divider()
+    st.title("🎯 Statistical Analysis: Phase 4")
+    st.markdown("### Crop-Specific Impact Analysis")
+
+    crops = df_final['Crop'].unique()
+    
+    for selected_crop in crops:
+        st.subheader(f"🌱 Analysis for {selected_crop}")
+        
+        # Subset Data
+        crop_data = audpc_results[audpc_results['Crop'] == selected_crop]
+        
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            st.markdown("**One-Way ANOVA (Field Type Effect)**")
+            try:
+                formula_crop = 'AUDPC_Value ~ C(Field_Type)'
+                model_crop = ols(formula_crop, data=crop_data).fit()
+                anova_crop = sm.stats.anova_lm(model_crop, typ=2)
+                st.dataframe(anova_crop.style.format(precision=4))
+            except Exception as e:
+                st.error(f"Error in ANOVA: {e}")
+                
+        with col_b:
+            st.markdown("**Efficiency of Organic Management**")
+            means = crop_data.groupby('Field_Type')['AUDPC_Value'].mean()
+            if 'Organic' in means and 'Non-organic' in means:
+                reduction = ((means['Non-organic'] - means['Organic']) / means['Non-organic']) * 100
+                st.metric(label=f"Mite Reduction in {selected_crop}", value=f"{reduction:.2f}%", help="Reduction in AUDPC compared to Non-organic")
+            else:
+                st.warning("Ensure 'Field_Type' contains both 'Organic' and 'Non-organic' labels for % calculation.")
+
+        # Mixed Model for this specific crop
+        with st.expander(f"View Temporal Model for {selected_crop}"):
+            try:
+                crop_temporal = df_final[df_final['Crop'] == selected_crop]
+                formula_mixed_crop = 'Mite_Count ~ C(Field_Type) * Week'
+                model_mixed_crop = sm.MixedLM.from_formula(formula_mixed_crop, groups=crop_temporal[random_grp], data=crop_temporal)
+                results_mixed_crop = model_mixed_crop.fit()
+                st.text(results_mixed_crop.summary())
+            except Exception as e:
+                st.error(f"Error in Mixed Model: {e}")
 
 else:
     st.info("Please upload a CSV file to begin.")
