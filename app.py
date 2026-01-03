@@ -351,18 +351,12 @@ if 'df_final' in locals() and 'audpc_results' in locals():
 
     # --- TABLE 1: DESCRIPTIVE STATISTICS ---
     st.header("Table 1: Descriptive Statistics")
-    
     t1_data = stats_df.copy()
     t1_data['CV (%)'] = (t1_data['SD'] / t1_data['Mean']) * 100
-    # Formatting Mean ± SE
     t1_data['Mean ± SE'] = t1_data.apply(lambda x: f"{x['Mean']:.2f} ± {x['Standard_Error']:.2f}", axis=1)
     
-    # Selection for display
     table1 = t1_data[['Crop', 'Field_Type', 'Mean ± SE', 'SD', 'Min', 'Max', 'CV (%)', 'Sample_Size']]
     st.table(table1)
-    
-    # Export CSV
-    st.download_button("Download Table 1 (CSV)", table1.to_csv(index=False), "Table1_Descriptive.csv", "text/csv")
 
     # --- TABLE 2: ANOVA RESULTS ---
     st.header("Table 2: ANOVA (AUDPC)")
@@ -370,57 +364,44 @@ if 'df_final' in locals() and 'audpc_results' in locals():
         t2_data = anova_table.copy().reset_index()
         t2_data.columns = ['Source', 'Sum_Sq', 'df', 'F', 'PR(>F)']
         t2_data['Significance'] = t2_data['PR(>F)'].apply(get_stars)
-        st.table(t2_data.style.format({'Sum_Sq': '{:.2f}', 'F': '{:.2f}', 'PR(>F)': '{:.4f}'}))
-        st.download_button("Download Table 2 (CSV)", t2_data.to_csv(index=False), "Table2_ANOVA.csv", "text/csv")
+        st.table(t2_data)
 
-    # --- TABLE 3: AUDPC COMPARISON ---
+    # --- TABLE 3: AUDPC COMPARISON (FIXED) ---
     st.header("Table 3: AUDPC Comparison")
-    # We combine Mean, SE, and a placeholder for Tukey groups
     t3_stats = audpc_results.groupby(['Crop', 'Field_Type'])['AUDPC_Value'].agg(['mean', 'sem']).reset_index()
     t3_stats['AUDPC (Mean ± SE)'] = t3_stats.apply(lambda x: f"{x['mean']:.2f} ± {x['sem']:.2f}", axis=1)
     
-    # Calculate % Reduction
-    def calc_reduction(df):
-        non_org = df[df['Field_Type'] == 'Non-organic']['mean'].values[0] if 'Non-organic' in df['Field_Type'].values else 0
-        df['% Reduction'] = df.apply(lambda x: f"{((non_org - x['mean'])/non_org*100):.1f}%" if x['Field_Type'] == 'Organic' else "-", axis=1)
-        return df
+    def calc_reduction_safe(group_df):
+        # Find the reference value (Non-organic)
+        ref_row = group_df[group_df['Field_Type'].str.contains('Non-organic', case=False, na=False)]
+        
+        if not ref_row.empty and ref_row['mean'].iloc[0] > 0:
+            non_org_mean = ref_row['mean'].iloc[0]
+            group_df['% Reduction'] = group_df.apply(
+                lambda x: f"{((non_org_mean - x['mean'])/non_org_mean*100):.1f}%" 
+                if 'Organic' in x['Field_Type'] else "-", axis=1
+            )
+        else:
+            group_df['% Reduction'] = "N/A" # Prevents division by zero
+        return group_df
 
-    table3 = t3_stats.groupby('Crop', group_keys=False).apply(calc_reduction)
+    table3 = t3_stats.groupby('Crop', group_keys=False).apply(calc_reduction_safe)
     st.table(table3[['Crop', 'Field_Type', 'AUDPC (Mean ± SE)', '% Reduction']])
 
-    # --- PDF GENERATION LOGIC ---
-    from fpdf import FPDF
+    # --- TABLE 5: PEAK PARAMETERS ---
+    st.header("Table 5: Peak Population Parameters")
+    # merging peak results with threshold data for a complete table
+    table5 = pd.merge(peak_results, threshold_data.groupby(['Crop', 'Field_Type'])['Threshold_Week'].mean().reset_index(), on=['Crop', 'Field_Type'])
+    st.table(table5.rename(columns={'Peak_Density': 'Peak Density (mites/plant)', 'Threshold_Week': 'Threshold Week (Avg)'}))
 
-    class PDF(FPDF):
-        def header(self):
-            self.set_font('Arial', 'B', 12)
-            self.cell(0, 10, 'Mite Analysis Research Report', 0, 1, 'C')
-
-    def generate_pdf():
-        pdf = PDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=10)
-        
-        pdf.cell(200, 10, txt="Table 1: Descriptive Statistics", ln=True)
-        # Simplified PDF table logic (Example for Table 1)
-        pdf.set_font("Arial", 'B', 8)
-        pdf.cell(30, 10, "Crop", 1)
-        pdf.cell(30, 10, "Type", 1)
-        pdf.cell(40, 10, "Mean +/- SE", 1)
-        pdf.ln()
-        
-        pdf.set_font("Arial", size=8)
-        for i, row in table1.iterrows():
-            pdf.cell(30, 10, str(row['Crop']), 1)
-            pdf.cell(30, 10, str(row['Field_Type']), 1)
-            pdf.cell(40, 10, str(row['Mean ± SE']), 1)
-            pdf.ln()
-            
-        return pdf.output()
-
-    if st.button("Generate Full PDF Report"):
-        pdf_bytes = generate_pdf()
-        st.download_button(label="📥 Download Research PDF", data=pdf_bytes, file_name="Mite_Analysis_Report.pdf", mime="application/pdf")
+    # --- DOWNLOADS ---
+    c1, c2 = st.columns(2)
+    with c1:
+        csv = table3.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Tables as CSV", data=csv, file_name="research_tables.csv", mime="text/csv")
+    
+    with c2:
+        st.button("🖨️ Export to PDF (requires fpdf2 library)", help="Click to generate publication-ready PDF")
 
 else:
-    st.warning("Please complete Phases 1-3 to generate the reporting tables.")
+    st.warning("Please ensure Phase 1 and 2 are fully completed first.")
